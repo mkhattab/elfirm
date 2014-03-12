@@ -85,6 +85,22 @@ be selected.")
   (interactive)
   (message elfirm-version))
 
+(defun elfirm-str-trim (str)
+  "Trim leading and trailing whitespace from STR."
+  (while (string-match "^ +\\| +$" str)
+    (setq str (replace-match "" t t str)))
+  str)
+
+(defun elfirm-str-split (str sep &optional trim)
+  "Split STR with separator SEP.
+
+If TRIM is t, then trim invidual strings."
+  (let ((strings
+         (split-string str sep t)))
+    (if trim
+        (mapcar 'elfirm-str-trim strings)
+      strings)))
+
 (defun elfirm-str-starts-with-p (str begins)
   "Return non-nil if string STR start with BEGINS."
   (and (string-match (rx-to-string `(and bos ,begins) t) str) t))
@@ -120,7 +136,8 @@ non-nil, then find that sub-directory."
           (if use-default
               (elfirm-p-j client-path (or directory
                                           (elfirm-category-property
-                                           :default-directory category))))))
+                                           :default-directory category)
+                                          "")))))
     (if (and client-path (file-exists-p client-path))
         (cond ((and use-default (file-exists-p client-default-path))
                client-default-path)
@@ -141,7 +158,8 @@ default directory specified in `elfirm-categories'."
          (file-path
           (concat client-path filename)))
     (if (file-exists-p file-path)
-        file-path)))
+        file-path
+      (error (format "default-file: %s is missing" filename)))))
 
 (defun elfirm-client-p (client)
   "Return non-nil if CLIENT string is not in ignored list."
@@ -159,11 +177,13 @@ default directory specified in `elfirm-categories'."
     (delq nil clients)))
 
 (defun elfirm-list-categories ()
+  "Return a list of categories."
   (mapcar (lambda (cat)
              (symbol-name (car cat)))
           elfirm-categories))
 
-(defun elfirm-list-files (category client)
+(defun elfirm-list-files (client category)
+  "Return a list of files within a CLIENT in CATEGORY."
   (let* ((category-path
           (elfirm-locate-client-path client category t))
          (files
@@ -171,9 +191,16 @@ default directory specified in `elfirm-categories'."
     files))
 
 (defun elfirm-select-category ()
+  "Return selected category."
   (intern-soft (completing-read "category: " (elfirm-list-categories))))
 
-(defun elfirm-select-client (prefix category)
+(defun elfirm-select-client (category &optional prefix)
+  "Return selected client within a CATEGORY.
+
+This function is used in an interactive command, if run with a
+PREFIX \\[universal-argument] \\[universal-argument], then select
+a client from a list. Otherwise, use `elfirm-current-client', if
+set."
   (let ((cr-client
          (lambda ()
            (completing-read "client: " (elfirm-list-clients category)))))
@@ -181,36 +208,42 @@ default directory specified in `elfirm-categories'."
           (elfirm-current-client)
           (t (funcall cr-client)))))
 
-(defun elfirm-select-file (prefix category client)
+(defun elfirm-select-file (client category &optional prefix)
+  "Return a selected file in CLIENT within CATEGORY.
+
+This function is used in an interactive command, if run with a
+PREFIX \\[universal-argument] \\[universal-argument], then select
+a client from a list. Otherwise, use `elfirm-current-client', if
+set."
   (cond ((equal prefix '(4))
          (completing-read "file: " (elfirm-list-files category client)))
         (t
          (elfirm-category-property :default-file category))))
 
-(defun elfirm-find-category-directory (category client &optional other)
-  "Find CATEGORY directory for CLIENT.
+(defun elfirm-find-category-directory (client category &optional other)
+  "Find CLIENT directory within CATEGORY.
 
 If a command prefix is passed then prompt for other directory.
 OTHER is non-nil, prompt for sub directory."
   (interactive
    (let ((category
           (elfirm-select-category)))
-     (list (elfirm-select-client current-prefix-arg category)
+     (list (elfirm-select-client category current-prefix-arg)
            category
            (and (equal current-prefix-arg '(4)) t))))
-  (dired (elfirm-locate-client-path client 'agenda (null other))))
+  (dired (elfirm-locate-client-path client category (null other))))
 
-(defun elfirm-find-category-file (category client &optional file)
-  "Find default file in CATEGORY.
+(defun elfirm-find-category-file (client category &optional file)
+  "Find default file in CLIENT within CATEGORY.
 
 If a command prefix is passed, then prompt for other FILE."
   (interactive
    (let* ((category
            (elfirm-select-category))
           (client
-           (elfirm-select-client current-prefix-arg category))
+           (elfirm-select-client category current-prefix-arg))
           (file
-           (elfirm-select-file current-prefix-arg category client)))
+           (elfirm-select-file client category current-prefix-arg )))
      (list category client file)))
   (find-file (elfirm-locate-client-file client category file)))
 
@@ -219,20 +252,20 @@ If a command prefix is passed, then prompt for other FILE."
   `(defun ,(intern (concat "elfirm-find-category-->" name)) (client &optional other)
      (interactive
       (list
-       (elfirm-select-client current-prefix-arg ,category)
+       (elfirm-select-client ,category current-prefix-arg)
        (and (equal current-prefix-arg '(4)) t)))
-     (elfirm-find-category-directory ,category client other)))
+     (elfirm-find-category-directory client ,category other)))
 
 (defmacro elfirm-deffind-file (name category)
   "Define an interactive command NAME that will find file in CATEGORY."
   `(defun ,(intern (concat "elfirm-find-file-->" name)) (client &optional file)
      (interactive
       (let* ((client
-              (elfirm-select-client current-prefix-arg ,category))
+              (elfirm-select-client ,category current-prefix-arg))
              (file
-              (elfirm-select-file current-prefix-arg ,category client)))
+              (elfirm-select-file client ,category current-prefix-arg)))
         (list client file)))
-     (elfirm-find-category-file ,category client file)))
+     (elfirm-find-category-file client ,category file)))
 
 (elfirm-deffind-category "agenda" 'agenda)
 (elfirm-deffind-category "documents" 'documents)
@@ -246,8 +279,69 @@ If a command prefix is passed, then prompt for other FILE."
 (elfirm-deffind-file "ledger" 'ledger)
 (elfirm-deffind-file "reports" 'reports)
 
-;; (defun elfirm-create-client-direcotry (name &optional categories))
-;; (defun elfirm-create-root-directory ())
+(defun elfirm-create-root-directory ()
+  "Create root directory."
+  (make-directory elfirm-root-directory)
+  elfirm-root-directory)
+
+(defun elfirm-create-category-directory (name)
+  "Create a category directory NAME, if it doesn't exist."
+  (let ((category-path
+         (elfirm-p-j elfirm-root-directory name)))
+    (if (and (file-exists-p elfirm-root-directory)
+             (not (file-exists-p category-path)))
+        (make-directory category-path))))
+
+(defun elfirm-create-client-directory (name &optional categories)
+  "Create a client with NAME, if it doesn't exist.
+
+Create client directories in a subset of CATEGORIES, if non-nil."
+  (let ((categorylist (or categories
+                          (elfirm-list-categories))))
+    (dolist (category categorylist)
+      (if (file-exists-p
+           (elfirm-locate-category-path (intern-soft category)))
+          (make-directory
+           (elfirm-p-j elfirm-root-directory
+                       category
+                       name
+                       (or (elfirm-category-property :default-directory
+                                                     (intern-soft category))
+                           ""))
+           t)                           ;create parent dirs
+        (error "Category directory doesn't exist")))))
+
+(defun elfirm-init-root ()
+  "Initialize root directory, creating category directories."
+  (interactive)
+  (let ((confirm
+         (yes-or-no-p
+          (format "init elfirm data directory at %s?" elfirm-root-directory))))
+    (if confirm
+        (progn
+          (if (not (file-exists-p elfirm-root-directory))
+              (elfirm-create-root-directory))
+          (dolist (category (elfirm-list-categories))
+            (elfirm-create-category-directory category))))))
+
+(defun elfirm-init-client (name &optional categories)
+  "Initialize client NAME.
+
+If passed with \\[universal-argument], then select CATEGORIES."
+  (interactive
+   (let ((categories
+          (mapconcat
+           'identity (elfirm-list-categories) ", ")))
+     (list
+      (read-string "client: ")
+      (if current-prefix-arg
+          (read-string "categories: " categories nil categories)
+        categories))))
+  (if name
+      (elfirm-create-client-directory
+       name
+       (elfirm-str-split categories "," t))
+    (error "Please enter a client name")))
 
 (define-minor-mode elfirm-mode
   "Toggle Elfirm mode.

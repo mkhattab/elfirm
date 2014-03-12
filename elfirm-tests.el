@@ -22,6 +22,28 @@
     (delete-directory elfirm-root-directory t)
     (setq elfirm-root-directory elfirm-test-old-root)))
 
+(ert-deftest elfirm-test-str-trim ()
+  "Should return a whitespace trimmed string."
+  (let ((result "monkey"))
+    (should
+     (string= (elfirm-str-trim "  monkey  ") result))
+    (should
+     (string= (elfirm-str-trim "monkey  ") result))
+    (should
+     (string= (elfirm-str-trim "monkey") result))
+    (should
+     (string= (elfirm-str-trim "") ""))))
+
+(ert-deftest elfirm-test-str-split ()
+  "Should return a list of string split by delimiter."
+  (let ((result '("one" "two" "three")))
+    (should
+     (equal (elfirm-str-split "one two three" " ") result))
+    (should
+     (equal (elfirm-str-split "one,two,three" ",") result))
+    (should
+     (equal (elfirm-str-split "one, two, three" "," t) result))))
+
 (ert-deftest elfirm-test-path-join ()
   "Should return a joined path string."
   (should
@@ -83,8 +105,9 @@
       (equal (stringp (elfirm-locate-client-file "acme" 'agenda "agenda.org")) t))
      (should
       (equal (stringp (elfirm-locate-client-file "acme" 'agenda)) t))
-     (should
-      (equal (elfirm-locate-client-file "acme" 'agenda "monkey.org") nil)))))
+     (should-error
+      (elfirm-locate-client-file "acme" 'agenda "monkey.org")
+      :type 'error))))
 
 (ert-deftest elfirm-test-list-clients ()
   "Should return a list of clients within a category."
@@ -106,4 +129,40 @@
   (elfirm-test-root-dir-fixture
    (lambda ()
      (should
-      (equal (elfirm-list-files 'agenda "acme") '("agenda.org"))))))
+      (equal (elfirm-list-files "acme" 'agenda) '("agenda.org"))))))
+
+(ert-deftest elfirm-test-create-root ()
+  "Should create a root directory defined in `elfirm-root-directory'."
+  (let ((elfirm-root-directory
+         (elfirm-p-j
+          temporary-file-directory
+          (make-temp-name "elfirm"))))
+    (unwind-protect
+        (progn
+          (should
+           (string= (elfirm-create-root-directory) elfirm-root-directory)))
+      (delete-directory elfirm-root-directory t))))
+
+(ert-deftest elfirm-test-create-category ()
+  "Should create category directories."
+  (elfirm-test-root-dir-fixture
+   (lambda ()
+     (let ((monkeycat
+            (elfirm-p-j elfirm-root-directory "monkeycat")))
+       (elfirm-create-category-directory "monkeycat")
+       (should
+        (equal (file-exists-p monkeycat) t))))))
+
+(ert-deftest elfirm-test-create-client ()
+  "Should create client directory with default sub directory"
+  (elfirm-test-root-dir-fixture
+   (lambda ()
+     (let ((client-path
+            (elfirm-p-j elfirm-root-directory "agenda" "kittens"))
+           (default-dir
+             (elfirm-category-property :default-directory 'agenda)))
+       (elfirm-create-client-directory "kittens" '("agenda"))
+       (should
+        (equal (file-exists-p client-path) t))
+       (should
+        (equal (file-exists-p (elfirm-p-j client-path default-dir)) t))))))
